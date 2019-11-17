@@ -109,6 +109,48 @@ bool get(const rapidjson::Value& from, T& to)
 	return conv.template get<engine>(from, to);
 }
 
+template <class... Args>
+void set(
+        rapidjson::Value& to,
+        const std::variant<std::monostate, Args...>& from,
+        engine::set_context allocator)
+{
+    std::visit(
+            [&](auto&& arg)
+            {
+                using FieldType = std::decay_t<decltype(arg)>;
+
+                if constexpr(std::is_same_v<FieldType, std::monostate>)
+                {
+                    to.SetObject();
+                    to.AddMember(
+                            rapidjson::Value().SetString(
+                                    "type",
+                                    strlen("type"),
+                                    allocator),
+                            "none",
+                            allocator);
+                }
+                else if(reflect::has_converter<FieldType>)
+                {
+                    to.SetObject();
+                    to.AddMember(
+                            rapidjson::Value().SetString(
+                                    "type",
+                                    strlen("type"),
+                                    allocator),
+                            FieldType::get_name().value,
+                            allocator);
+                    FieldType::get_converter().template set<engine>(to, arg, allocator);
+                }
+                else
+                {
+                    //TODO add support to basic types
+                }
+            },
+            from);
+}
+
 template <class T>
 void set(
         rapidjson::Value& to,
@@ -206,7 +248,8 @@ bool engine::get(
 
             if constexpr (reflect::has_converter<FieldType>)
             {
-                if(!param.IsObject() || !FieldType::get_converter().template get<engine>(param, arr_obj))
+                if(!param.IsObject()
+                || !FieldType::get_converter().template get<engine>(param, arr_obj))
                 {
                     return false;
                 }
@@ -268,31 +311,21 @@ bool engine::get(
         const char* str,
         std::variant<std::monostate, FieldTypes...>& obj_field)
 {
-    std::string type_str = str;
-    type_str += "_type";
-
-    if(!has(protocol_obj, str) || !has(protocol_obj, type_str.c_str()))
-    {
-        return false;
-    }
-
-    auto& type_field = protocol_obj[type_str.c_str()];
-
-    std::string type;
-
-    if(!json::get(type_field, type))
+    if(!has(protocol_obj, str))
     {
         return false;
     }
 
     auto& field = protocol_obj[str];
 
-    if(type == "none")
+    if(!field.IsObject() || !has(field, "type") || !field["type"].IsString())
     {
-        return field.IsNull();
+        return false;
     }
 
-    if(!field.IsObject())
+    std::string type;
+
+    if(!json::get(field["type"], type))
     {
         return false;
     }
@@ -433,11 +466,6 @@ void engine::set(
         const std::variant<std::monostate, FieldTypes...>& obj_field,
         set_context ctx)
 {
-    std::string type_str = str;
-    type_str += "_type";
-
-    rapidjson::Value type;
-
     rapidjson::Value v;
     std::visit(
             [&](auto&& arg)
@@ -446,13 +474,25 @@ void engine::set(
 
                 if constexpr(std::is_same_v<FieldType, std::monostate>)
                 {
-                    type.SetString("none");
-                    v.SetNull();
+                    v.SetObject();
+                    v.AddMember(
+                            rapidjson::Value().SetString(
+                                    "type",
+                                    strlen("type"),
+                                    ctx),
+                            "none",
+                            ctx);
                 }
                 else if(reflect::has_converter<FieldType>)
                 {
-                    type.SetString(FieldType::get_name().value);
                     v.SetObject();
+                    v.AddMember(
+                            rapidjson::Value().SetString(
+                                    "type",
+                                    strlen("type"),
+                                    ctx),
+                            FieldType::get_name().value,
+                            ctx);
                     FieldType::get_converter().template set<engine>(v, arg, ctx);
                 }
                 else
@@ -461,14 +501,6 @@ void engine::set(
                 }
             },
             obj_field);
-
-    protocol_obj.AddMember(
-        rapidjson::Value().SetString(
-                type_str.c_str(),
-                type_str.length(),
-                ctx),
-        type.Move(),
-        ctx);
 
     protocol_obj.AddMember(
         rapidjson::Value().SetString(

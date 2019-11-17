@@ -4,7 +4,7 @@ from conans import CMake
 
 class Cis1Tpl(ConanFile):
     name = "cis1_tpl"
-    version = "0.0.1"
+    version = "0.0.3"
     description = "TMP helpers and reflection."
     author = "MokinIA <mia@tomsksoft.com>"
     settings = "os", "arch", "compiler", "build_type"
